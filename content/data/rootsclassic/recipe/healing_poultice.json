@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "food",
+  "ingredients": [
+    "rootsclassic:redcurrant",
+    "minecraft:paper",
+    "rootsclassic:pestle",
+    "rootsclassic:verdant_sprig"
+  ],
+  "result": {
+    "count": 2,
+    "id": "rootsclassic:healing_poultice"
+  }
+}

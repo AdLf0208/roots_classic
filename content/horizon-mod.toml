@@ -1,0 +1,13 @@
+# Port-owned content mod for the Roots Classic 1.21.1-1.5.10 slice: the three herbs,
+# the forage items, their food values and the recipes that use them. Textures,
+# models, blockstates and the berries tag are the upstream mod's own MIT assets,
+# read from the exact ATM10 jar (see ../SOURCE.md). Local-only until publishing
+# is approved (see ../LICENSE and ../notes.md).
+id = "rootsclassic"
+name = "Roots Classic"
+version = "0.1.0"
+description = "Slice 1: the three herbs, the forage items and their first uses"
+authors = ["Elucent", "Lothrazar", "Mrbysco"]
+api = "0.2"
+side = "both"
+capabilities = ["registries"]

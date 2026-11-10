@@ -1,0 +1,22 @@
+{
+  "title": "itemGroup.rootsclassic",
+  "icon": "rootsclassic:dragons_eye",
+  "items": [
+    "rootsclassic:flare_orchid",
+    "rootsclassic:midnight_bloom",
+    "rootsclassic:radiant_daisy",
+    "rootsclassic:blackcurrant",
+    "rootsclassic:redcurrant",
+    "rootsclassic:whitecurrant",
+    "rootsclassic:elderberry",
+    "rootsclassic:nightshade",
+    "rootsclassic:old_root",
+    "rootsclassic:verdant_sprig",
+    "rootsclassic:infernal_bulb",
+    "rootsclassic:dragons_eye",
+    "rootsclassic:rooty_stew",
+    "rootsclassic:fruit_salad",
+    "rootsclassic:healing_poultice",
+    "rootsclassic:pestle"
+  ]
+}

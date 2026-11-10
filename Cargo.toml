@@ -1,0 +1,19 @@
+[package]
+# Port of: Roots Classic 1.21.1-1.5.10 (Lothrazar/RootsClassic, MIT),
+# Minecraft Java 1.21.1 NeoForge. Clean-room Rust rewrite; local-only until
+# publishing is approved (ARCHITECTURE.md §8).
+name = "horizon-rootsclassic"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "Roots Classic for Horizon: the herbal forage loop and the three herbs (slice 1)"
+publish = false
+
+[lib]
+# This exact source is also injected as a same-crate module by horizon-mixins.
+path = "mixins/rootsclassic/runtime.rs"
+
+[workspace]
+members = ["tools/audit"]
+resolver = "2"

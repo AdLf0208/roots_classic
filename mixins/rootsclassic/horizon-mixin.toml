@@ -1,0 +1,67 @@
+[mod]
+id = "rootsclassic"
+version = "0.1.0"
+priority = 100
+
+[compatibility]
+horizon_revision = "1d63e0a5a37a7a708eb0b32b49bf0dfeb28ed8a9"
+
+# The pure forage table, the config parser and the heal arithmetic, injected
+# as `crate::game::rootsclassic`.
+[[module]]
+id = "runtime"
+file = "crates/horizon-client/src/game.rs"
+name = "rootsclassic"
+source = "runtime.rs"
+
+# Game-side glue: the block/tool read the forage table needs, the config file,
+# and the player write the healing needs.
+[[module]]
+id = "state"
+file = "crates/horizon-client/src/game.rs"
+name = "rootsclassic_state"
+source = "support.rs"
+
+# The content half is inside this bundle (`data/rootsclassic-content.hmod`, the built
+# `content/rootsclassic.hmod`): this writes it to `.horizon-cache/` and appends it to the
+# dev-mod list, so one `.hnmod` installs the herbs, the items and the code. The registry
+# keeps one file per project, so a split port could not be listed; AE2 ships the same pattern.
+[[injection]]
+id = "embedded-content"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::mods::content_root"
+helper = "embedded_content.rs"
+bindings = [
+  { name = "root", ty = "&std::path::Path", value = "root" },
+  { name = "enabled", ty = "&std::collections::BTreeSet<String>", value = "enabled" },
+  { name = "dev", ty = "&[std::path::PathBuf]", value = "dev" },
+]
+
+# A broken block's drops are rolled (API 75): short grass, a grown crop, ripe
+# nether wart, a chorus flower and leaves may add the jar's herb.
+[[injection]]
+id = "loot-drops"
+hook = "loot_drops"
+hook_version = 1
+kind = "HEAD"
+helper = "loot_drops.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "context", ty = "&crate::game::native_hooks::NativeLootDrops<'_>", value = "context" },
+  { name = "drops", ty = "&mut Vec<horizon_client::items::ItemStack>", value = "drops" },
+]
+
+# A consumable's effect of the mod's own kind (API 74): `rootsclassic:heal`
+# carries the jar's `RootsFoodItem` heal amounts.
+[[injection]]
+id = "consume-effect"
+hook = "consume_effect"
+hook_version = 1
+kind = "HEAD"
+helper = "consume_effect.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "kind", ty = "&str", value = "kind" },
+  { name = "data", ty = "&serde_json::Value", value = "data" },
+]

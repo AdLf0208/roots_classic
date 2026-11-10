@@ -1,0 +1,19 @@
+{
+  "template": "minecraft:sweet_berries",
+  "components": {
+    "minecraft:food": {
+      "nutrition": 2,
+      "saturation": 0.4
+    },
+    "minecraft:compostable": {
+      "layers": "minecraft:compostable/medium"
+    },
+    "minecraft:consumable": {
+      "on_consume_effects": [
+        {
+          "type": "minecraft:clear_all_effects"
+        }
+      ]
+    }
+  }
+}
