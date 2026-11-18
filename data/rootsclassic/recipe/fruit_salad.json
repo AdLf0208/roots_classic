@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "food",
+  "ingredients": [
+    "minecraft:melon",
+    "minecraft:melon",
+    "minecraft:melon",
+    "minecraft:apple",
+    "minecraft:bowl",
+    "rootsclassic:elderberry",
+    "rootsclassic:whitecurrant",
+    "rootsclassic:blackcurrant",
+    "rootsclassic:redcurrant"
+  ],
+  "result": {
+    "count": 1,
+    "id": "rootsclassic:fruit_salad"
+  }
+}

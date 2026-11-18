@@ -1,0 +1,10 @@
+{
+  "template": "minecraft:mushroom_stew",
+  "components": {
+    "minecraft:food": {
+      "nutrition": 8,
+      "saturation": 14.4
+    },
+    "!minecraft:use_remainder": {}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "template": "minecraft:sweet_berries",
+  "components": {
+    "minecraft:food": {
+      "nutrition": 1,
+      "saturation": 0.2
+    },
+    "!minecraft:compostable": {}
+  }
+}

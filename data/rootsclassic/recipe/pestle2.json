@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "group": "pestle",
+  "key": {
+    "X": "minecraft:diorite"
+  },
+  "pattern": [
+    "X  ",
+    " XX",
+    " XX"
+  ],
+  "result": {
+    "count": 1,
+    "id": "rootsclassic:pestle"
+  }
+}

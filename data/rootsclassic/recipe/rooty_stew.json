@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "food",
+  "ingredients": [
+    "#c:crops/wheat",
+    "minecraft:bowl",
+    "rootsclassic:old_root"
+  ],
+  "result": {
+    "count": 1,
+    "id": "rootsclassic:rooty_stew"
+  }
+}
