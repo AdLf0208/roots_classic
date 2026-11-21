@@ -1,4 +1,38 @@
-# Validation — Roots Classic slice 1 (and the embedding that ships it as one file)
+# Validation — Roots Classic
+
+> **Current: 0.2.1, slice 2 (the powder chain), at pin `0a875da` / mixins `e59da909…`.** The ladder,
+> its logs and its hashes are in `notes.md` → **`## Slice 2 — the powder chain`** →
+> *Verification*, `../_shared/evidence/rootsclassic/sdk-0a875da/` and the three in-game legs in
+> `../_shared/evidence/rootsclassic-e2e/`. Everything from "Slice 1" down is the retired bundle's
+> history (`.hnmod`, pin `1d63e0a5`), kept as the record.
+
+## Slice 2 ladder (0.2.1, `0a875da`)
+
+Red → green, in order:
+
+1. **Red (rules):** `cargo test` with only slice 2's tests — 11 compile errors, first
+   `error[E0425]: cannot find type Scene in this scope` (`sdk-0a875da/slice2-red.log`).
+2. **Green (rules):** 29 passed (14 slice-1 runtime + 7 slice-2 runtime + 8 glue).
+3. **Red (in game):** the growth leg failed `FAIL: growth powder on dirt: 3 -> 1, expected one
+   spent` — one click spent two powders because a `PASS` answer lets the click be re-issued. Fixed
+   by answering `SuccessServer` when the powder acted; `probe-double-spend.log` now reads
+   `click 1: powder 3 -> 2`.
+4. **Green (in game):** `PASS` + `EXIT:0` with every control (`e2e-launcher.log`), the control leg
+   `EXIT:1` (`e2e-control.log`) and `SELFTEST=1` `EXIT:1` (`e2e-selftest.log`);
+   `check-e2e-logs.py rootsclassic-e2e --strict` → `logs=3 ok=3 missing-exit=0 bad-exit=0`.
+
+| Step | Evidence |
+|---|---|
+| slice 1 is a byte prefix of `runtime.rs` | `sdk-0a875da/runtime-carry.log` |
+| tests | **29 passed**, 0 failed (`unit.log`, `sdk-test.log`) |
+| fmt · clippy | `FMT_EXIT:0` · 0 warnings (`fmt.log`, `clippy.log`) |
+| two builds, identical | 59,769 B, `c49f7f02…4d6f` (`build.log`, `build-again.log`, `sha256-both.txt`) |
+| `check` · `fits 0a875da` · `fits 0b14f8a` | `check.log` · `made for` · `fits` (`sdk-fits*.log`) |
+| package contents | 101 entries, no `Cargo.lock` (`package-entries.log`) |
+| carry | 93 files, 0 pending (`carry-check.log`) |
+| package gate | `verify-sdk-package.py rootsclassic` → 1/1 |
+
+## Slice 1 — the retired bundle's validation
 
 > **Format note (2026-11-18): history.** This is the retired `.hnmod` bundle's ladder at pin
 > `1d63e0a5`. The port is now a flat SDK `.hmod`; the current ladder, its logs and its hashes are

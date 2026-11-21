@@ -5,10 +5,10 @@
 #
 # Cargo's name and version are not the mod's identity: horizon-mod.toml is.
 name = "rootsclassic"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT"
-description = "Roots Classic for Horizon: the herbal forage loop and the three herbs (slice 1)"
+description = "Roots Classic for Horizon: the herbs, the forage loop and the powder chain"
 publish = false
 
 [dependencies]

@@ -1,12 +1,15 @@
 id = "rootsclassic"
 name = "Roots Classic"
-version = "0.2.0"
-description = """A port of Roots Classic for Horizon: slice 1, the herbs and their first uses. The three
-herb plants, the five berries, the four materials, the three dishes and the pestle, with the jar's
-food and effect numbers, its recipes and creative tab, and two behaviours — the global forage
-modifier that hides an old root, a verdant sprig, an infernal bulb, a dragon's eye or a berry in a
-broken block (1/N chances from config/rootsclassic-common.toml), and the rootsclassic:heal consume
-effect. Rituals, standing stones, staves and the Phantom Skeleton are not ported yet."""
+version = "0.2.1"
+description = """A port of Roots Classic for Horizon: the herbs, their uses and the powders that make them.
+The three herb plants, the five berries, the four materials, the three dishes and the pestle, with
+the jar's food and effect numbers, its recipes and creative tab; the global forage modifier that
+hides an old root, a verdant sprig, an infernal bulb, a dragon's eye or a berry in a broken block
+(1/N chances from config/rootsclassic-common.toml); the rootsclassic:heal consume effect; growth
+powder (dirt to grass, a young crop grows) and mutating powder, whose three mutations turn a blue
+orchid in the Nether into a flare orchid, a poppy in The End into a midnight bloom and an oxeye
+daisy in the Overworld at noon into a radiant daisy, with the jar's ingredients, conditions and
+side effects. Rituals, standing stones, staves and the Phantom Skeleton are not ported yet."""
 authors = ["Elucent", "Lothrazar", "Mrbysco", "AdLf0208"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins,
 # beside data/ and assets/. The id is the resource namespace and the only identity: Cargo's
@@ -21,5 +24,5 @@ capabilities = ["registries"]
 
 [native]
 game = "26.3"
-horizon = "0b14f8acfd97fa2c750e42795249dcc981178ca4"
+horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

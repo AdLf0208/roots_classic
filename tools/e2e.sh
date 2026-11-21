@@ -33,12 +33,21 @@
 # Launch 2 (the same world settings, chances set to 0): the same five breaks
 # forage nothing — the config drives the table, it is not a fixed chance.
 #
-# NEGATIVE=1 / SELFTEST=1 keeps the scenario but expects a berry from shears:
-# the run MUST fail after the scenario, proving the control is not vacuous.
+# Slice 2 adds the powder chain (0.2.1):
+#   6. growth powder on dirt makes grass and is spent; on stone nothing changes
+#      and nothing is spent; on a young wheat it advances the age and is spent;
+#   7. the three mutations, each in its dimension with its effect and exactly
+#      its two or three ingredients summoned as item entities: the flare orchid
+#      (Nether, fire resistance, netherrack ring, Fire ticks on the player), the
+#      midnight bloom (The End, obsidian two below, slowness, skipTicks=200) and
+#      the radiant daisy (Overworld at noon, night vision, blindness);
+#   8. their controls: no fire resistance, a bystander item entity in the box
+#      and midnight instead of noon each leave the vanilla flower alone, and the
+#      powder is spent even when nothing matched (the jar's own behaviour).
 #
-# The last green run was the retired 0.1.0 bundle on the 1d63e0a5 pin
-# (`../_shared/evidence/rootsclassic/e2e-embedded.log`); this script has not run
-# against an SDK package yet (no launcher and no game build at 0b14f8a here).
+# NEGATIVE=1 / SELFTEST=1 keeps the scenario but expects a berry from shears
+# (and a mutation without fire resistance), so the run MUST fail: the controls
+# are not vacuous.
 set -euo pipefail
 
 CLONE=/home/adlf/Desktop/all_the_mods_10_rust_rewrite
@@ -164,7 +173,9 @@ arena() {
     # The floor is wide enough that the dragon's-eye teleport (+/-16 blocks)
     # always lands on it, and the chunks stay loaded.
     end "forceload add -16 -16 64 48"
-    end "fill -8 119 -8 48 119 40 minecraft:stone"
+    # Wide enough for the dragon's eye's +/-16 blocks in both axes: a landing
+    # outside the floor drops the player into the End's void.
+    end "fill -8 119 -20 48 119 40 minecraft:stone"
     end "tp @s 20.5 120 12.5"
     end "difficulty peaceful"
     end "gamerule spawn_mobs false"
@@ -255,6 +266,90 @@ expect_drop() { # label reply item want
     [ "$got" = "$4" ] || fail "$1: expected $4 $3, got $got"
     echo "$1 PASS: $got $3"
 }
+
+# ---- slice 2 helpers: dimensions, item entities, the player file -----------
+# Run a command in another dimension (`execute in <dim> run ...`).
+at() { ctl command "execute in $1 run $2" >/dev/null; }
+dimension() { ctl state | jq -r '.dimension'; }
+# Wait until the player is in DIM (`execute in ... run tp` moves them).
+enter() { # dim
+    local i
+    for i in $(seq 1 40); do
+        [ "$(dimension)" = "$1" ] && return 0
+        ctl wait 10 >/dev/null
+    done
+    fail "the player is in $(dimension), not $1"
+}
+count_of() { ctl inventory | jq -r --arg i "$1" '.counts[$i] // 0'; }
+items_near() { ctl entities 8 item | jq -r '.entities | length'; }
+# One item entity nothing picks up, from the jar's own `AABB` scan box.
+summon_item() { # dim x y z item [count]
+    at "$1" "summon item $2 $3 $4 {Item:{id:\"$5\",count:${6:-1}},PickupDelay:32767s,Age:-32768s}"
+}
+# Aim at a point. The mutations aim *inside* a flower's outline, not at its top
+# face: a ray that grazes the face only (the ring stands at the same height)
+# passes over the flower and lands on the netherrack behind it.
+aim_point() { # x y z
+    ctl look-at "$1" "$2" "$3" >/dev/null 2>&1 \
+        || fail "cannot aim at point $1 $2 $3: $(ctl looking-at 2>&1)"
+    ctl wait 3 >/dev/null
+}
+# Stand at a spot, verifying it: a `tp` that lands elsewhere leaves the next click
+# "out of reach" and reads like a port failure.
+goto_spot() { # x y z
+    local i pos
+    for i in 1 2 3 4 5; do
+        # A server-side teleport, as the vanilla `/tp` runs it: the client-only
+        # cursor moved but the click path still saw the old position 6.8 blocks
+        # away, so this leg never reached its block.
+        ctl command "tp @s $1 $2 $3" >/dev/null 2>&1 || true
+        ctl wait 4 >/dev/null
+        pos=$(ctl state | jq -c '.player.position')
+        python3 - "$1" "$2" "$3" "$pos" <<'PY' && return 0
+import json, math, sys
+x, y, z = (float(v) for v in sys.argv[1:4])
+try:
+    here = json.loads(sys.argv[4])
+except (ValueError, TypeError):
+    raise SystemExit(1)
+raise SystemExit(0 if here and math.dist((x, y, z), here) < 1.0 else 1)
+PY
+    done
+    fail "the player never reached $1 $2 $3 (at $pos)"
+}
+
+# Right-click a block's face, with one retry: the client's ray and the server's
+# block are a tick apart, so the first click can land before the aim does (the
+# herbs' `break_block` has the same retry for the same reason).
+click_block() { # x y z face
+    local reply
+    if reply=$(ctl interact "$1" "$2" "$3" "$4" 2>&1); then
+        return 0
+    fi
+    echo "interact retry: $reply" >&2
+    ctl look-at block "$1" "$2" "$3" "$4" >/dev/null 2>&1 || true
+    ctl wait 4 >/dev/null
+    reply=$(ctl interact "$1" "$2" "$3" "$4" 2>&1) && return 0
+    echo "interact reply: $reply" >&2
+    echo "  player $(ctl state | jq -c '{position, dimension, screen}') looking-at $(ctl looking-at 2>&1)" >&2
+    return 1
+}
+grown_age() { ctl block 10 120 16 | jq -r '.state' | sed -n 's/.*age=\([0-9]*\).*/\1/p'; }
+netherrack_ring() {
+    local spot
+    for spot in 5,4 3,4 4,3 4,5 5,3 3,5 3,3 5,5; do
+        at minecraft:the_nether "setblock ${spot%,*} 120 ${spot#*,} minecraft:netherrack"
+    done
+}
+# One entity tag through `/data get entity @s`: the mutation's side effects are
+# entity tags (`Fire`, `NeoForgeData`) that `ctl state`/`ctl effects` do not
+# report. The reply is the command's chat line.
+data_get() { ctl command "data get entity @s $1" | jq -r '.chat[0] // ""'; }
+# The `s` number in "… has the following entity data: 400s".
+data_short() { # path
+    data_get "$1" | sed -n 's/.*data: \(-\?[0-9][0-9]*\)s.*/\1/p'
+}
+
 
 # =========================================================== launch 0 (control, retired)
 # The retired bundle's control: the same binary with the embedded content made unavailable
@@ -496,6 +591,11 @@ echo "nightshade PASS: effects $(effects)"
 ctl command "effect clear @s" >/dev/null
 
 say "the dragon's eye teleports the eater"
+# Creative for the teleport: it lands up to 16 blocks up or down, and a fall of
+# that height would damage a survival player enough to matter (and a landing off
+# the floor would be the void). The move is measured the same either way.
+ctl command "gamemode creative @s" >/dev/null
+ctl wait 2 >/dev/null
 before=$(pos)
 hold "$EYE"
 ctl use-item --hold 2 >/dev/null
@@ -510,6 +610,20 @@ PY
 echo "dragon's eye: $before -> $after (moved $moved)"
 is_gt "$moved" 1 || fail "the dragon's eye did not move the player ($before -> $after, moved $moved)"
 echo "dragon's eye PASS: moved $moved blocks"
+# The teleport is random (+/-16 blocks, and vertically too): it can land off the
+# floor. Put the player back and rescue a death rather than failing the next leg
+# with a dead screen.
+ctl command "gamemode creative @s" >/dev/null
+end "tp @s 20.5 120 12.5"
+ctl wait 10 >/dev/null
+if [ "$(ctl screen | jq -r '.screen // empty')" = dead ]; then
+    ctl respawn >/dev/null 2>&1 || true
+    ctl wait 10 >/dev/null
+    ctl command "gamemode creative @s" >/dev/null
+    end "tp @s 20.5 120 12.5"
+    ctl wait 6 >/dev/null
+fi
+ctl command "effect clear @s" >/dev/null
 
 # ------------------------------------------------------------ recipes
 say "the five recipes are registered (a known recipe id, or the file did not load)"
@@ -532,6 +646,243 @@ python3 "$PORT/tools/craft_check.py" "$SOCK" "$CTL" 30 120 16 || {
     ctl logs --lines 800 2>/dev/null | grep -i "recipe\|rootsclassic" | tail -20 || true
     fail "craft_check.py failed"
 }
+
+
+# ------------------------------------------------------------ the powders (slice 2)
+say "growth powder: dirt -> grass and the powder is spent; stone grows nothing and is free"
+end "setblock 6 119 16 minecraft:dirt"
+end "setblock 8 119 16 minecraft:stone"
+end "setblock 10 119 16 minecraft:farmland[moisture=7]"
+end "setblock 10 120 16 minecraft:wheat[age=0]"
+ctl wait 6 >/dev/null
+ctl command "gamemode survival @s" >/dev/null
+ctl command "effect clear @s" >/dev/null
+
+hold $MOD:growth_powder 3
+goto_spot 6.5 120 18.5
+ctl look-at block 6 119 16 up >/dev/null
+ctl wait 3 >/dev/null
+before=$(count_of "$MOD:growth_powder")
+click_block 6 119 16 up || fail "cannot use the growth powder on dirt"
+ctl wait 6 >/dev/null
+state=$(block_name 6 119 16)
+after=$(count_of "$MOD:growth_powder")
+[ "$state" = minecraft:grass_block ] || fail "growth powder on dirt gave $state, expected grass"
+[ "$before" = 3 ] || fail "the growth powder leg started with $before in hand, expected 3"
+[ "$after" = 2 ] || fail "growth powder on dirt: $before -> $after, expected one spent"
+echo "growth powder PASS: dirt -> $state, powder $before -> $after"
+
+hold $MOD:growth_powder 2
+goto_spot 8.5 120 18.5
+ctl look-at block 8 119 16 up >/dev/null
+ctl wait 3 >/dev/null
+before=$(count_of "$MOD:growth_powder")
+click_block 8 119 16 up || true
+ctl wait 6 >/dev/null
+state=$(block_name 8 119 16)
+after=$(count_of "$MOD:growth_powder")
+[ "$state" = minecraft:stone ] || fail "growth powder turned stone into $state"
+[ "$after" = "$before" ] || fail "growth powder on stone spent $before -> $after, expected nothing spent"
+echo "stone control PASS: $state unchanged, powder stays $after"
+
+hold $MOD:growth_powder 2
+goto_spot 10.5 120 18.5
+# A wheat at age 0 is two pixels tall: `look-at block … up` finds no face, so the
+# click is aimed at a point inside the crop and made with `use-item`.
+before=$(grown_age)
+aim_point 10.5 120.06 16.5
+ctl use-item >/dev/null 2>&1 || true
+ctl wait 8 >/dev/null
+if [ "$(grown_age)" = "$before" ]; then
+    aim_point 10.5 120.06 16.5
+    ctl use-item >/dev/null 2>&1 || true
+    ctl wait 8 >/dev/null
+fi
+after=$(grown_age)
+[ "$before" = 0 ] || fail "the wheat started at age $before, expected 0"
+is_gt "$after" 0 || fail "the growth powder did not advance the young crop (age $before -> $after)"
+[ "$(count_of "$MOD:growth_powder")" = 1 ] \
+    || fail "growth powder on a growing crop left $(count_of "$MOD:growth_powder"), expected one of two"
+echo "growing crop PASS: wheat age $before -> $after, one powder spent"
+
+# ------------------------------------------------------------ the mutations
+say "mutating powder: the flare orchid in the Nether"
+at minecraft:the_nether "forceload add 0 0 15 15"
+at minecraft:the_nether "fill 0 119 0 12 119 12 minecraft:stone"
+at minecraft:the_nether "fill 0 120 0 12 124 12 minecraft:air"
+at minecraft:the_nether "kill @e[type=!player]"
+at minecraft:the_nether "setblock 4 119 4 minecraft:dirt"
+at minecraft:the_nether "setblock 4 120 4 minecraft:blue_orchid"
+netherrack_ring
+# The ring blocks the line of sight from every side, so the click comes from a
+# stand one block above it, two blocks north of the flower.
+at minecraft:the_nether "setblock 4 121 6 minecraft:stone"
+at minecraft:the_nether "tp @s 4.5 122 6.5"
+enter minecraft:the_nether
+ctl wait 20 >/dev/null
+ctl command "effect clear @s" >/dev/null
+ctl command "effect give @s minecraft:fire_resistance 900" >/dev/null
+for attempt in 1 2 3; do
+    at minecraft:the_nether "setblock 4 120 4 minecraft:blue_orchid"
+    at minecraft:the_nether "kill @e[type=item]"
+    ctl wait 4 >/dev/null
+    hold $MOD:mutating_powder 1
+    summon_item minecraft:the_nether 5.5 122.5 4.5 minecraft:blaze_rod
+    summon_item minecraft:the_nether 3.5 122.5 4.5 minecraft:lava_bucket
+    ctl wait 6 >/dev/null
+    echo "flare box before: $(items_near) item entities, block $(block_name 4 120 4)"
+    echo "flare scene: dimension=$(dimension) effects=$(effects)"
+    echo "flare ring: $(for spot in 5,4 3,4 4,3 4,5 5,3 3,5 3,3 5,5; do block_name "${spot%,*}" 120 "${spot#*,}"; done | tr '\n' ' ')"
+    before=$(count_of "$MOD:mutating_powder")
+    aim_point 4.5 120.3 4.5
+    echo "flare aim: $(ctl looking-at 2>&1 | jq -c '{kind, block}' 2>/dev/null || true)"
+    ctl use-item >/dev/null 2>&1 || true
+    ctl wait 6 >/dev/null
+    echo "flare after the click: powder $before -> $(count_of "$MOD:mutating_powder"), entities $(items_near)"
+    [ "$(block_name 4 120 4)" = $MOD:flare_orchid ] && break
+    echo "  attempt $attempt did not mutate; retrying" >&2
+done
+state=$(block_name 4 120 4)
+after=$(count_of "$MOD:mutating_powder")
+[ "$state" = $MOD:flare_orchid ] || fail "the blue orchid stayed $state, expected $MOD:flare_orchid"
+[ "$(items_near)" = 0 ] || fail "the mutation left $(items_near) item entities behind"
+[ "$before" = 1 ] || fail "the flare leg started with $before powders, expected 1"
+[ "$after" = 0 ] || fail "mutating powder on a hit: $before -> $after, expected one spent"
+echo "flare orchid PASS: $state, ingredients gone, powder $before -> $after"
+fire=$(data_short Fire)
+is_gt "${fire:-0}" 200 || fail "the flare orchid did not set the player on fire (Fire=$fire)"
+echo "flare orchid PASS: the player burns (Fire=$fire ticks, /data get entity @s Fire)"
+
+say "control: no fire resistance, so the same box leaves the blue orchid alone"
+ctl command "effect clear @s" >/dev/null
+at minecraft:the_nether "setblock 4 120 4 minecraft:blue_orchid"
+hold $MOD:mutating_powder 1
+summon_item minecraft:the_nether 5.5 122.5 4.5 minecraft:blaze_rod
+summon_item minecraft:the_nether 3.5 122.5 4.5 minecraft:lava_bucket
+ctl wait 6 >/dev/null
+aim_point 4.5 120.3 4.5
+ctl use-item >/dev/null 2>&1 || true
+ctl wait 6 >/dev/null
+state=$(block_name 4 120 4)
+if [ "$state" = $MOD:flare_orchid ]; then
+    fail "SELFTEST: without fire resistance the blue orchid mutated (the control is dead)"
+fi
+[ "$state" = minecraft:blue_orchid ] || fail "the control left $state, expected the blue orchid"
+[ "$(count_of "$MOD:mutating_powder")" = 0 ] \
+    || fail "a failed mutation left $(count_of "$MOD:mutating_powder"), expected the jar's one spent"
+echo "no-resistance control PASS: $state kept, the powder is still spent"
+at minecraft:the_nether "kill @e[type=item]"
+
+say "control: a bystander item entity stops the mutation (the jar's exact match)"
+ctl command "effect give @s minecraft:fire_resistance 900" >/dev/null
+hold $MOD:mutating_powder 1
+summon_item minecraft:the_nether 5.5 122.5 4.5 minecraft:blaze_rod
+summon_item minecraft:the_nether 3.5 122.5 4.5 minecraft:lava_bucket
+summon_item minecraft:the_nether 4.5 122.5 5.5 minecraft:stick
+ctl wait 6 >/dev/null
+aim_point 4.5 120.3 4.5
+ctl use-item >/dev/null 2>&1 || true
+ctl wait 6 >/dev/null
+state=$(block_name 4 120 4)
+[ "$state" = minecraft:blue_orchid ] || fail "an extra item entity still mutated the flower into $state"
+[ "$(items_near)" = 3 ] || fail "the refused mutation destroyed items: $(items_near) left of 3"
+echo "extra-item control PASS: $state kept, all 3 entities still there"
+at minecraft:the_nether "kill @e[type=item]"
+
+say "mutating powder: the midnight bloom in The End"
+at minecraft:the_end "setblock 10 118 12 minecraft:obsidian"
+at minecraft:the_end "setblock 10 119 12 minecraft:dirt"
+at minecraft:the_end "setblock 10 120 12 minecraft:poppy"
+at minecraft:the_end "tp @s 10.5 120 14.5"
+enter minecraft:the_end
+ctl wait 10 >/dev/null
+ctl command "effect clear @s" >/dev/null
+ctl command "effect give @s minecraft:slowness 900" >/dev/null
+for attempt in 1 2 3; do
+    at minecraft:the_end "setblock 10 120 12 minecraft:poppy"
+    at minecraft:the_end "kill @e[type=item]"
+    ctl wait 4 >/dev/null
+    hold $MOD:mutating_powder 1
+    summon_item minecraft:the_end 11.5 122.5 12.5 minecraft:coal_block
+    ctl wait 6 >/dev/null
+    echo "bloom scene: dimension=$(dimension) effects=$(effects) block=$(block_name 10 120 12) below2=$(block_name 10 118 12) entities=$(items_near)"
+    before=$(count_of "$MOD:mutating_powder")
+    aim_point 10.5 120.3 12.5
+    echo "bloom aim: $(ctl looking-at 2>&1 | jq -c '{kind, block}' 2>/dev/null || true)"
+    ctl use-item >/dev/null 2>&1 || true
+    ctl wait 6 >/dev/null
+    echo "bloom after the click: powder $before -> $(count_of "$MOD:mutating_powder"), entities $(items_near)"
+    [ "$(block_name 10 120 12)" = $MOD:midnight_bloom ] && break
+    echo "  attempt $attempt did not mutate; retrying" >&2
+done
+state=$(block_name 10 120 12)
+[ "$state" = $MOD:midnight_bloom ] || fail "the poppy stayed $state, expected $MOD:midnight_bloom"
+skip=$(data_get NeoForgeData)
+case "$skip" in
+    *RMOD_skipTicks*200*) ;;
+    *) fail "the midnight bloom left the player's NeoForgeData as $skip, expected skipTicks 200" ;;
+esac
+echo "midnight bloom PASS: $state, NeoForgeData=$skip"
+
+say "mutating powder: the radiant daisy in the Overworld at noon"
+at minecraft:overworld "forceload add 0 0 15 15"
+at minecraft:overworld "fill 0 100 0 12 100 12 minecraft:stone"
+at minecraft:overworld "fill 0 101 0 12 105 12 minecraft:air"
+at minecraft:overworld "kill @e[type=!player]"
+at minecraft:overworld "setblock 4 100 4 minecraft:dirt"
+at minecraft:overworld "setblock 4 101 4 minecraft:oxeye_daisy"
+at minecraft:overworld "gamerule do_daylight_cycle false"
+at minecraft:overworld "time set 6000"
+at minecraft:overworld "tp @s 4.5 101 6.5"
+enter minecraft:overworld
+ctl wait 20 >/dev/null
+noon=$(ctl state | jq -r '.time.time_of_day')
+awk -v t="$noon" 'BEGIN { exit !(t > 5000 && t < 7000) }' \
+    || fail "the Overworld time of day is $noon, outside the daisy's 5000..7000"
+ctl command "effect clear @s" >/dev/null
+ctl command "effect give @s minecraft:night_vision 900" >/dev/null
+for attempt in 1 2 3; do
+    at minecraft:overworld "setblock 4 101 4 minecraft:oxeye_daisy"
+    at minecraft:overworld "kill @e[type=item]"
+    ctl wait 4 >/dev/null
+    hold $MOD:mutating_powder 1
+    summon_item minecraft:overworld 5.5 103.5 4.5 minecraft:glowstone
+    summon_item minecraft:overworld 3.5 103.5 4.5 minecraft:prismarine_crystals
+    ctl wait 6 >/dev/null
+    before=$(count_of "$MOD:mutating_powder")
+    aim_point 4.5 101.3 4.5
+    ctl use-item >/dev/null 2>&1 || true
+    ctl wait 6 >/dev/null
+    echo "daisy after the click: powder $before -> $(count_of "$MOD:mutating_powder"), block $(block_name 4 101 4)"
+    [ "$(block_name 4 101 4)" = $MOD:radiant_daisy ] && break
+    echo "  attempt $attempt did not mutate; retrying" >&2
+done
+state=$(block_name 4 101 4)
+after=$(count_of "$MOD:mutating_powder")
+[ "$state" = $MOD:radiant_daisy ] || fail "the oxeye daisy stayed $state, expected $MOD:radiant_daisy"
+effects | grep -q blindness || fail "the radiant daisy applied no blindness: $(effects)"
+[ "$before" = 1 ] || fail "the daisy leg started with $before powders, expected 1"
+[ "$after" = 0 ] || fail "mutating powder on a hit: $before -> $after, expected one spent"
+echo "radiant daisy PASS: $state, blindness applied, powder $before -> $after"
+
+say "control: the same daisy box at midnight stays an oxeye daisy"
+at minecraft:overworld "setblock 4 101 4 minecraft:oxeye_daisy"
+at minecraft:overworld "time set 18000"
+hold $MOD:mutating_powder 1
+summon_item minecraft:overworld 5.5 103.5 4.5 minecraft:glowstone
+summon_item minecraft:overworld 3.5 103.5 4.5 minecraft:prismarine_crystals
+ctl wait 6 >/dev/null
+aim_point 4.5 101.3 4.5
+ctl use-item >/dev/null 2>&1 || true
+ctl wait 6 >/dev/null
+state=$(block_name 4 101 4)
+[ "$state" = minecraft:oxeye_daisy ] || fail "at midnight the daisy mutated into $state"
+echo "midnight control PASS: $state kept"
+at minecraft:overworld "kill @e[type=item]"
+at minecraft:the_end "tp @s 20.5 120 12.5"
+enter minecraft:the_end
+ctl command "gamemode creative @s" >/dev/null
+ctl command "effect clear @s" >/dev/null
 
 # ------------------------------------------------------------ launch 2
 say "launch 2: chances 0 in the config, so the same breaks forage nothing"
@@ -566,6 +917,6 @@ if [ "$NEGATIVE" = 1 ] || [ "$SELFTEST" = 1 ]; then
     exit 1
 fi
 
-echo "PASS: the package's own content loads (no --dev-mod) and the three herbs place on dirt, refuse stone and drop themselves; short grass, a grown crop, ripe nether wart, a chorus flower and oak leaves forage the jar's old root, verdant sprig, infernal bulb, dragon's eye and one berry at chance 1, while a young crop, young wart, stone and sheared leaves forage nothing; the same breaks forage nothing at chance 0; redcurrant heals 2, the poultice 5, elderberry clears effects, nightshade poisons, the dragon's eye teleports and old root changes nothing; the jar's recipes craft with empty wrong-ingredient controls"
+echo "PASS: the package's own content loads (no --dev-mod) and the three herbs place on dirt, refuse stone and drop themselves; short grass, a grown crop, ripe nether wart, a chorus flower and oak leaves forage the jar's old root, verdant sprig, infernal bulb, dragon's eye and one berry at chance 1, while a young crop, young wart, stone and sheared leaves forage nothing; the same breaks forage nothing at chance 0; redcurrant heals 2, the poultice 5, elderberry clears effects, nightshade poisons, the dragon's eye teleports and old root changes nothing; the jar's recipes craft with empty wrong-ingredient controls (the powders included); growth powder turns dirt to grass and grows a young crop, spending itself, and refuses stone for free; mutating powder turns a blue orchid into a flare orchid in the Nether (the player burns), a poppy into a midnight bloom in The End (skipTicks 200) and an oxeye daisy into a radiant daisy at noon (blindness), consuming its ingredients and one powder, while no fire resistance, a bystander item entity and midnight each leave the flower alone"
 echo "EXIT:0"
 exit 0

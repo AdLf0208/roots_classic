@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "#c:seeds/wheat",
+    "minecraft:short_grass",
+    "#c:dusts/redstone",
+    "rootsclassic:pestle"
+  ],
+  "result": {
+    "count": 4,
+    "id": "rootsclassic:growth_powder"
+  }
+}

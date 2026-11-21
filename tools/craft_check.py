@@ -14,6 +14,12 @@ crafting grid is slots 100-108 row-major, result 200 (`ctl screen`). Cases:
   7. shapeless `healing_poultice`: redcurrant + paper + pestle + verdant sprig
      -> 2 poultices;
   8. its control: a stick instead of the redcurrant -> empty.
+  9. shapeless `growth_powder`: wheat seeds + short grass + redstone + pestle
+     -> 4 growth powders;
+ 10. its control: a stick instead of the seeds -> empty;
+ 11. shapeless `mutating_powder`: 4 growth powder + nether star + nether wart
+     + pestle -> 1 mutating powder;
+ 12. its control: 3 growth powder instead of 4 -> empty.
 
 Exits 1 on the first mismatch.
 """
@@ -54,6 +60,13 @@ def main():
         except SystemExit:
             pass
         wait(5)
+        # A death earlier in the scenario leaves the dead screen open, which
+        # refuses every click: respawn before the first case and carry on.
+        if run("screen").get("screen") == "dead":
+            run("respawn")
+            wait(20)
+            run("command", "gamemode survival @s")
+            wait(5)
         run("setblock", x, y, z, "minecraft:air")
         run("setblock", x, y, z, "minecraft:crafting_table")
         wait(2)
@@ -244,6 +257,74 @@ def main():
             ("minecraft:stick", ["103"]),
         ],
     )
+    # Slice 2: the powder chain. Both are shapeless, so the grid order only has
+    # to hold the right multiset.
+    check(
+        "wheat seeds + short grass + redstone + pestle -> 4 growth powder",
+        [
+            ("minecraft:wheat_seeds", 1),
+            ("minecraft:short_grass", 1),
+            ("minecraft:redstone", 1),
+            (f"{mod}:pestle", 1),
+        ],
+        [
+            ("minecraft:wheat_seeds", ["100"]),
+            ("minecraft:short_grass", ["101"]),
+            ("minecraft:redstone", ["102"]),
+            (f"{mod}:pestle", ["103"]),
+        ],
+        f"{mod}:growth_powder",
+        4,
+        take=True,
+    )
+    empty_control(
+        "short grass + redstone + pestle + stick -> nothing",
+        [
+            ("minecraft:short_grass", 1),
+            ("minecraft:redstone", 1),
+            (f"{mod}:pestle", 1),
+            ("minecraft:stick", 1),
+        ],
+        [
+            ("minecraft:short_grass", ["100"]),
+            ("minecraft:redstone", ["101"]),
+            (f"{mod}:pestle", ["102"]),
+            ("minecraft:stick", ["103"]),
+        ],
+    )
+    check(
+        "4 growth powder + nether star + nether wart + pestle -> mutating powder",
+        [
+            (f"{mod}:growth_powder", 4),
+            ("minecraft:nether_star", 1),
+            ("minecraft:nether_wart", 1),
+            (f"{mod}:pestle", 1),
+        ],
+        [
+            (f"{mod}:growth_powder", ["100", "101", "102", "103"]),
+            ("minecraft:nether_star", ["104"]),
+            ("minecraft:nether_wart", ["105"]),
+            (f"{mod}:pestle", ["106"]),
+        ],
+        f"{mod}:mutating_powder",
+        1,
+        take=True,
+    )
+    empty_control(
+        "3 growth powder + nether star + nether wart + pestle -> nothing",
+        [
+            (f"{mod}:growth_powder", 3),
+            ("minecraft:nether_star", 1),
+            ("minecraft:nether_wart", 1),
+            (f"{mod}:pestle", 1),
+        ],
+        [
+            (f"{mod}:growth_powder", ["100", "101", "102"]),
+            ("minecraft:nether_star", ["103"]),
+            ("minecraft:nether_wart", ["104"]),
+            (f"{mod}:pestle", ["105"]),
+        ],
+    )
 
     run("close")
     wait(3)
@@ -252,8 +333,8 @@ def main():
             print(f"FAIL: {failure}", file=sys.stderr)
         raise SystemExit(1)
     print("recipe PASS: pestle (shaped), rooty_stew and healing_poultice "
-          "(shapeless) and fruit_salad craft; every wrong-ingredient control "
-          "stays empty")
+          "(shapeless), fruit_salad and the two powders craft; every "
+          "wrong-ingredient control stays empty")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "rootsclassic:growth_powder",
+    "rootsclassic:growth_powder",
+    "rootsclassic:growth_powder",
+    "rootsclassic:growth_powder",
+    "#c:nether_stars",
+    "#c:crops/nether_wart",
+    "rootsclassic:pestle"
+  ],
+  "result": {
+    "count": 1,
+    "id": "rootsclassic:mutating_powder"
+  }
+}

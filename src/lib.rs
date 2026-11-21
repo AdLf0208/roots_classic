@@ -8,18 +8,29 @@
 //!   ripe `nether_wart`, a `chorus_flower` or leaves that dropped no leaf block may add its herb.
 //! - `consume_effect`: the mod's own `rootsclassic:heal` kind, the heal `RootsFoodItem` applies.
 //!
-//! The pure rules live in [`runtime`], copied byte for byte from the retired `.hnmod`; this file
-//! is the glue only. The carried content (`assets/`, `data/`) is in this same package, so the
-//! herbs, items and recipes arrive with the code instead of a second download.
+//! Slice 2 adds the powder chain that makes the herbs survival-obtainable:
+//!
+//! - `Powder` (an [`ItemPart`] on `rootsclassic:mutating_powder`): the jar's `MutatingPowderItem`.
+//!   A four-block stepped ray names a block, the 5×5×5 box around it is scanned for item entities,
+//!   and when the box's stacks are exactly one mutation's inputs the block becomes the herb, the
+//!   entities are discarded and the recipe's side effect runs.
+//! - `GrowthPowder` (on `rootsclassic:growth_powder`): the jar's `GrowthPowderItem`. Dirt becomes
+//!   grass, water with air above grows a lily pad, and anything else gets one bone-meal growth.
+//!
+//! The pure rules live in [`runtime`], copied byte for byte from the retired `.hnmod` for slice 1;
+//! this file is the glue only. The carried content (`assets/`, `data/`) is in this same package, so
+//! the herbs, items and recipes arrive with the code instead of a second download.
 pub mod runtime;
 
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use mod_api::{
-    self, Config, ConfigKind, ConfigLoadingEvent, ConsumeEffectEvent, Hooks, HostSide, ItemKey,
-    ItemStack, LootDropsEvent, RandomSource, RegisterConfigsEvent, Registrar, RegistrationContext,
-    ServerHost, Tag,
+    self, ActiveEffect, BlockUpdateFlags, Config, ConfigKind, ConfigLoadingEvent,
+    ConsumeEffectEvent, EffectKey, Hand, Hooks, Host, HostSide, HostTransaction, InteractionResult,
+    ItemKey, ItemPart, ItemPlace, ItemResource, ItemStack, LevelRef, LootDropsEvent, PlayerRef,
+    RandomSource, RegisterConfigsEvent, Registrar, RegistrationContext, ServerHost, Tag,
+    UseItemEvent, UseOnEvent,
 };
 
 /// This mod's id, which the manifest and the config file both use.
@@ -30,6 +41,29 @@ const HEAL: &str = "rootsclassic:heal";
 
 /// The jar's global loot condition: a shears never forages.
 const SHEARS: &str = "minecraft:shears";
+
+/// `MutatingPowderItem`'s item, and its recipe's prerequisite.
+const MUTATING_POWDER: &str = "rootsclassic:mutating_powder";
+/// `GrowthPowderItem`'s item.
+const GROWTH_POWDER: &str = "rootsclassic:growth_powder";
+
+/// The NeoForge persistent-data key the midnight bloom writes (`Const.NBT_SKIP_TICKS`).
+const SKIP_TICKS: &str = "rootsclassic:RMOD_skipTicks";
+
+/// The blindness a radiant daisy puts on the player: 1200 ticks, amplifier 0.
+const BLINDNESS_TICKS: i32 = 1200;
+
+/// The fire a flare orchid puts on the player: `igniteForSeconds(20)`.
+const FLARE_FIRE_TICKS: i32 = 20 * 20;
+
+/// The two powder items and the effect they apply, resolved once at registration.
+struct PowderIds {
+    mutating: ItemKey,
+    growth: ItemKey,
+    blindness: EffectKey,
+}
+
+static POWDER: OnceLock<PowderIds> = OnceLock::new();
 
 /// The item keys the runtime's rules name, resolved once at registration.
 ///
@@ -68,6 +102,16 @@ impl Hooks for Mod {
             shears: r.item_key(SHEARS),
         };
         let _ = IDS.set(ids);
+        // Slice 2: the two powders are Parts of their own items, so the game calls them only for
+        // those stacks and the port never has to ask which item was used.
+        let powder = PowderIds {
+            mutating: r.item_key(MUTATING_POWDER),
+            growth: r.item_key(GROWTH_POWDER),
+            blindness: r.effect_key("minecraft:blindness"),
+        };
+        r.item_part(powder.mutating, Powder);
+        r.item_part(powder.growth, GrowthPowder);
+        let _ = POWDER.set(powder);
     }
 
     /// Register `config/rootsclassic-common.toml` — the jar's own file name — as this mod's
@@ -175,6 +219,283 @@ impl Hooks for Mod {
         // `LivingEntity.heal`'s net effect: the game caps the result at the player's maximum.
         let _ = living.set_health(host, target);
     }
+}
+
+/// The mutating powder's `ItemPart`: the jar's `MutatingPowderItem`. The game calls it only for
+/// `rootsclassic:mutating_powder`, so the glue never asks which item was used.
+struct Powder;
+
+#[mod_api::horizon_part]
+impl ItemPart for Powder {
+    /// `Item.use`: ray-cast four blocks, scan the 5×5×5 box, and mutate the flower when the box
+    /// holds exactly one recipe's inputs. Upstream answers `SUCCESS` on both sides, so the arm
+    /// swings even when nothing matched; the powder is spent either way.
+    fn use_item(
+        &self,
+        host: HostSide<'_>,
+        event: &mut UseItemEvent<'_>,
+    ) -> Option<InteractionResult> {
+        let HostSide::Server(host) = host else {
+            return Some(InteractionResult::Success);
+        };
+        let ids = POWDER.get()?;
+        mutate(host, ids, event);
+        Some(InteractionResult::SuccessServer)
+    }
+}
+
+/// The growth powder's `ItemPart`: the jar's `GrowthPowderItem.useOn`.
+struct GrowthPowder;
+
+#[mod_api::horizon_part]
+impl ItemPart for GrowthPowder {
+    /// Dirt becomes grass, water with air above grows a lily pad, and anything else gets one
+    /// bone-meal growth; the powder is spent only when the world changed.
+    ///
+    /// Upstream answers `PASS` unconditionally. Here a `PASS` lets the click fall through and be
+    /// re-issued, which runs this handler twice and spends two powders for one growth (measured:
+    /// 3 powders became 1 on one click). Answering `SuccessServer` when the powder acted ends the
+    /// click after the one growth; a click that grew nothing still passes, so the block's own use
+    /// runs exactly as upstream leaves it.
+    fn use_on(&self, host: HostSide<'_>, event: &mut UseOnEvent<'_>) -> Option<InteractionResult> {
+        let HostSide::Server(host) = host else {
+            return Some(InteractionResult::Pass);
+        };
+        if grow(host, event) {
+            Some(InteractionResult::SuccessServer)
+        } else {
+            Some(InteractionResult::Pass)
+        }
+    }
+}
+
+/// `MutatingPowderItem.use` on the server: the ray, the box, the recipe and its side effect.
+fn mutate(host: &mut dyn ServerHost, ids: &PowderIds, event: &UseItemEvent<'_>) {
+    let Some(player) = host.player(event.player) else {
+        return;
+    };
+    let Some(level) = player.level(&*host) else {
+        return;
+    };
+    let entity = player.entity();
+    let Some(eye) = entity.eye_position(&*host) else {
+        return;
+    };
+    let Some(rotation) = entity.rotation(&*host) else {
+        return;
+    };
+    let look = look_vector(rotation[0], rotation[1]);
+    let target = ray_target(&*host, level, eye, look);
+    let (min, max) = mutation_box(target);
+    let Some(entities) = level.entities_in(&*host, min, max) else {
+        return;
+    };
+    let mut items = Vec::new();
+    let mut found = Vec::new();
+    for candidate in entities {
+        let Some(item) = host.item_entity(candidate) else {
+            continue;
+        };
+        let Some(stack) = item.stack(&*host) else {
+            continue;
+        };
+        found.push(stack.item().id(&*host));
+        items.push(candidate);
+    }
+    let effects = effect_ids(&*host, player);
+    let base = block_name(&*host, level, target).unwrap_or_default();
+    let dimension = level.dimension().id(&*host).unwrap_or_default();
+    let below2 =
+        block_name(&*host, level, [target[0], target[1] - 2, target[2]]).unwrap_or_default();
+    let ring: [String; 8] =
+        neighbours(target).map(|pos| block_name(&*host, level, pos).unwrap_or_default());
+    let ring: [&str; 8] = ring.each_ref().map(String::as_str);
+    let item_refs: Vec<&str> = found.iter().map(String::as_str).collect();
+    let effect_refs: Vec<&str> = effects.iter().map(String::as_str).collect();
+    let scene = runtime::MutagenScene {
+        base: &base,
+        dimension: &dimension,
+        day_time: level.day_time(&*host).unwrap_or_default(),
+        below2: &below2,
+        neighbours: ring,
+        items: &item_refs,
+        effects: &effect_refs,
+    };
+    let Some(recipe) = runtime::mutation(&scene) else {
+        spend(host, event.player, event.hand, event.stack);
+        return;
+    };
+    let Some(state) = host.block_state_id(recipe.result()) else {
+        return;
+    };
+    if !matches!(level.set_block(host, target, state, update_all()), Ok(true)) {
+        return;
+    }
+    // `MutagenRecipe.matches` guarantees the box holds exactly the recipe's inputs, so every
+    // entity the scan found is one this mutation consumed.
+    for entity in items {
+        entity.discard(host);
+    }
+    crafted(host, ids, player, recipe);
+    spend(host, event.player, event.hand, event.stack);
+}
+
+/// `MutagenRecipe.onCrafted` for the recipe that matched.
+fn crafted(
+    host: &mut dyn ServerHost,
+    ids: &PowderIds,
+    player: PlayerRef,
+    recipe: runtime::Mutation,
+) {
+    match recipe {
+        runtime::Mutation::FlareOrchid => {
+            // `player.igniteForSeconds(20)`.
+            let _ = player
+                .entity()
+                .set_remaining_fire_ticks(host, FLARE_FIRE_TICKS);
+        }
+        runtime::Mutation::MidnightBloom => {
+            // `player.getPersistentData().putInt(Const.NBT_SKIP_TICKS, 200)`.
+            let mut data = player.persistent_data(&*host).unwrap_or_default();
+            data.insert(SKIP_TICKS.into(), Tag::Int(200));
+            let _ = player.set_persistent_data(host, data);
+        }
+        runtime::Mutation::RadiantDaisy => {
+            // `new MobEffectInstance(MobEffects.BLINDNESS, 1200, 0)`: ambient false, particles and
+            // icon shown, as the two-argument constructor leaves them.
+            let Some(living) = host.living(player.entity()) else {
+                return;
+            };
+            let effect = ActiveEffect::new(ids.blindness, BLINDNESS_TICKS, 0, false, true, true);
+            let _ = living.add_effect(host, &effect);
+        }
+    }
+}
+
+/// `GrowthPowderItem.useOn` on the server.
+fn grow(host: &mut dyn ServerHost, event: &UseOnEvent<'_>) -> bool {
+    let Some(player) = host.player(event.player) else {
+        return false;
+    };
+    let Some(level) = player.level(&*host) else {
+        return false;
+    };
+    let pos = event.pos;
+    let above = [pos[0], pos[1] + 1, pos[2]];
+    let block = block_name(host, level, pos).unwrap_or_default();
+    let over = block_name(host, level, above).unwrap_or_default();
+    let grew = match runtime::growth(&block, &over) {
+        Some(runtime::Growth::Grass) => set(host, level, pos, "minecraft:grass_block"),
+        // Upstream places the lily pad and then falls out to `return false`, so the powder is
+        // never spent and one powder grows lily pads forever. The port returns success.
+        Some(runtime::Growth::LilyPad) => set(host, level, above, "minecraft:lily_pad"),
+        // `state.randomTick` on a bonemealable block, as the closest supported API: `bone_meal`
+        // refuses a block that cannot grow and reports whether something did.
+        None => level.bone_meal(host, pos),
+    };
+    if grew {
+        spend(host, event.player, event.hand, event.stack);
+    }
+    grew
+}
+
+/// Write `id` at `pos` with vanilla's `setBlockAndUpdate` flags; whether it changed.
+fn set(host: &mut dyn ServerHost, level: LevelRef, pos: [i32; 3], id: &str) -> bool {
+    let Some(state) = host.block_state_id(id) else {
+        return false;
+    };
+    matches!(level.set_block(host, pos, state, update_all()), Ok(true))
+}
+
+/// `Block.UPDATE_ALL`: `setBlockAndUpdate`'s flags (`NEIGHBORS | CLIENTS`).
+fn update_all() -> BlockUpdateFlags {
+    BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS
+}
+
+/// Keyed by item: `stack.shrink(1)`, unless the player is creative (`ItemPlace::extract` gives
+/// without losing any for a creative player).
+fn spend(host: &mut dyn ServerHost, player: u128, hand: Hand, stack: &ItemStack) {
+    let place = ItemPlace::PlayerHand { player, hand };
+    let resource = ItemResource::of(stack);
+    let _ = host.transaction(|host, tx| {
+        place.extract(host, tx, &resource, 1);
+        Ok::<(), ()>(())
+    });
+}
+
+/// The block the powder's stepped ray names: the first non-air sample, or the last sample when
+/// the four blocks are empty (`RootsUtil.getRayTrace`).
+fn ray_target(host: &dyn Host, level: LevelRef, eye: [f64; 3], look: [f64; 3]) -> [i32; 3] {
+    let mut last = [0, 0, 0];
+    for pos in runtime::ray_steps(eye, look, runtime::POWDER_REACH) {
+        last = pos;
+        let Some(state) = level.block_state(host, pos) else {
+            continue;
+        };
+        let Some(text) = host.block_state_string(state) else {
+            continue;
+        };
+        if split_state(&text).0 != "minecraft:air" {
+            return pos;
+        }
+    }
+    last
+}
+
+/// The id of the block at `pos`, without its properties.
+fn block_name(host: &dyn Host, level: LevelRef, pos: [i32; 3]) -> Option<String> {
+    let state = level.block_state(host, pos)?;
+    let text = host.block_state_string(state)?;
+    Some(split_state(&text).0.to_owned())
+}
+
+/// The ids of the effects `player` carries.
+fn effect_ids(host: &dyn Host, player: PlayerRef) -> Vec<String> {
+    let Some(living) = host.living(player.entity()) else {
+        return Vec::new();
+    };
+    let Some(effects) = living.effects(host) else {
+        return Vec::new();
+    };
+    effects
+        .into_iter()
+        .map(|effect| effect.id.id(host))
+        .collect()
+}
+
+/// `LivingEntity.getLookAngle()` from the entity's rotation in degrees.
+fn look_vector(yaw: f32, pitch: f32) -> [f64; 3] {
+    let yaw = f64::from(yaw).to_radians();
+    let pitch = f64::from(pitch).to_radians();
+    let flat = pitch.cos();
+    [-yaw.sin() * flat, -pitch.sin(), yaw.cos() * flat]
+}
+
+/// The eight horizontal neighbours, in the order upstream tests them:
+/// east, west, north, south, east+north, west+south, north+west, south+east.
+fn neighbours(pos: [i32; 3]) -> [[i32; 3]; 8] {
+    let [x, y, z] = pos;
+    [
+        [x + 1, y, z],
+        [x - 1, y, z],
+        [x, y, z - 1],
+        [x, y, z + 1],
+        [x + 1, y, z - 1],
+        [x - 1, y, z + 1],
+        [x - 1, y, z - 1],
+        [x + 1, y, z + 1],
+    ]
+}
+
+/// `MutatingPowderItem`'s item-entity box: `pos ± 2` on each axis (`pos - 2 .. pos + 3`).
+fn mutation_box(pos: [i32; 3]) -> ([f64; 3], [f64; 3]) {
+    let at = |axis: usize| f64::from(pos[axis]);
+    let low = runtime::MUTATION_BOX;
+    let high = runtime::MUTATION_BOX + 1.0;
+    (
+        [at(0) - low, at(1) - low, at(2) - low],
+        [at(0) + high, at(1) + high, at(2) + high],
+    )
 }
 
 /// The config in force, or the jar's defaults before (or without) a load.
@@ -315,5 +636,43 @@ mod tests {
         );
         loaded("");
         assert_eq!(chances(), runtime::Chances::default());
+    }
+
+    #[test]
+    fn the_eight_neighbours_are_the_horizontal_ring_in_upstream_order() {
+        assert_eq!(
+            neighbours([10, 64, 10]),
+            [
+                [11, 64, 10],
+                [9, 64, 10],
+                [10, 64, 9],
+                [10, 64, 11],
+                [11, 64, 9],
+                [9, 64, 11],
+                [9, 64, 9],
+                [11, 64, 11],
+            ]
+        );
+    }
+
+    #[test]
+    fn the_mutation_box_is_the_five_block_cube() {
+        // `new AABB(pos - 2, pos + 3)` is five blocks across, inclusive of both corners.
+        assert_eq!(
+            mutation_box([10, 64, 10]),
+            ([8.0, 62.0, 8.0], [13.0, 67.0, 13.0])
+        );
+    }
+
+    #[test]
+    fn the_look_vector_follows_the_rotation() {
+        let close =
+            |got: [f64; 3], want: [f64; 3]| got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-9);
+        // Yaw 0, pitch 0 looks along +Z.
+        assert!(close(look_vector(0.0, 0.0), [0.0, 0.0, 1.0]));
+        // Yaw 90 looks along -X, as vanilla's `getLookAngle` does.
+        assert!(close(look_vector(90.0, 0.0), [-1.0, 0.0, 0.0]));
+        // Pitch 90 looks straight down.
+        assert!(close(look_vector(0.0, 90.0), [0.0, -1.0, 0.0]));
     }
 }

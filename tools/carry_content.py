@@ -40,7 +40,9 @@ BERRIES = ["blackcurrant", "redcurrant", "whitecurrant", "elderberry", "nightsha
 MATERIALS = ["old_root", "verdant_sprig", "infernal_bulb", "dragons_eye"]
 FOODS = ["rooty_stew", "fruit_salad", "healing_poultice"]
 TOOLS = ["pestle"]
-ITEMS = BERRIES + MATERIALS + FOODS + TOOLS
+# Slice 2's powder chain: the mutating powder is made from growth powder.
+POWDERS = ["growth_powder", "mutating_powder"]
+ITEMS = BERRIES + MATERIALS + FOODS + TOOLS + POWDERS
 
 # Bytes copied unchanged from the jar (the mod's own MIT assets).
 VERBATIM = (
@@ -69,6 +71,14 @@ TEMPLATES = {
     "fruit_salad": "minecraft:mushroom_stew",
     "healing_poultice": "minecraft:sweet_berries",
     "pestle": "minecraft:iron_nugget",
+    # Both powders stack like a vanilla dust, and neither may be a block item:
+    # `minecraft:redstone` as a template made the powder *place a redstone wire*
+    # on the clicked block (measured 2026-11-21: a stone click with 3 growth
+    # powders left 2 and a wire above), because the redstone item carries the wire
+    # block. Sugar and gunpowder are plain 64-stack items. `mutating_powder` is
+    # stacksTo(1) (RootsRegistry.MUTATING_POWDER), which `STACK_SIZE` states.
+    "growth_powder": "minecraft:sugar",
+    "mutating_powder": "minecraft:gunpowder",
 }
 
 # `minecraft:food` is `{nutrition, saturation}` where saturation is 2 x
@@ -173,7 +183,7 @@ def components(item: str) -> dict:
 
 # An item file names `max_stack_size` beside `template` (26.3 refuses it inside
 # `components`, which is for block files).
-STACK_SIZE = {"healing_poultice": 8, "pestle": 1}
+STACK_SIZE = {"healing_poultice": 8, "pestle": 1, "mutating_powder": 1}
 
 
 def item_decl(item: str) -> dict:
@@ -245,12 +255,46 @@ RECIPES = {
         ],
         "result": {"count": 2, "id": f"{MOD}:healing_poultice"},
     },
+    # Slice 2. Note the shape: 26.3 takes a bare item or tag string in
+    # `ingredients`, never the 1.21.1 `{"item": …}` object (a bare object is
+    # refused by the recipe codec).
+    "growth_powder": {
+        "type": "minecraft:crafting_shapeless",
+        "category": "misc",
+        "ingredients": [
+            "#c:seeds/wheat",
+            "minecraft:short_grass",
+            "#c:dusts/redstone",
+            f"{MOD}:pestle",
+        ],
+        "result": {"count": 4, "id": f"{MOD}:growth_powder"},
+    },
+    "mutating_powder": {
+        "type": "minecraft:crafting_shapeless",
+        "category": "misc",
+        "ingredients": [
+            f"{MOD}:growth_powder",
+            f"{MOD}:growth_powder",
+            f"{MOD}:growth_powder",
+            f"{MOD}:growth_powder",
+            "#c:nether_stars",
+            "#c:crops/nether_wart",
+            f"{MOD}:pestle",
+        ],
+        "result": {"count": 1, "id": f"{MOD}:mutating_powder"},
+    },
 }
 
 # `#c:crops/wheat` is a NeoForge convention tag 26.3 does not ship; the port
 # writes it for the mod's own recipe (carry-pipeline.md 4.6).
 TAGS = {
     "data/c/tags/item/crops/wheat.json": {"values": ["minecraft:wheat"]},
+    # The three convention tags slice 2's recipes name, as NeoForge declares
+    # them and 26.3 does not ship (carry-pipeline.md 4.6).
+    "data/c/tags/item/seeds/wheat.json": {"values": ["minecraft:wheat_seeds"]},
+    "data/c/tags/item/dusts/redstone.json": {"values": ["minecraft:redstone"]},
+    "data/c/tags/item/nether_stars.json": {"values": ["minecraft:nether_star"]},
+    "data/c/tags/item/crops/nether_wart.json": {"values": ["minecraft:nether_wart"]},
 }
 
 LANG_KEYS = (

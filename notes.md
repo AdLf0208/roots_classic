@@ -1,5 +1,10 @@
 # Roots Classic → Horizon
 
+> **Slice 2 (2026-11-21): version 0.2.1 at pin `0a875da` (Nightly 2026-11-20), mixins
+> `e59da909…`.** The powder chain — Growth Powder and Mutating Powder with its three mutations — is
+> in; `notes.md` → **`## Slice 2 — the powder chain`** is the current state for that slice. The
+> `0b14f8a` block below stays as the migration record (its `[native] horizon` is now `0a875da`).
+>
 > **Format (2026-11-18): the port is a flat SDK `.hmod` now.** Horizon's mod-API merge (#16941,
 > launcher ≥ 0.2.70) retired `.hnmod`; the 0.1.0 bundle this file describes below (PR **#808**,
 > closed by the format purge) was migrated to `horizon-mod.toml` + `Cargo.toml` + `src/lib.rs`
@@ -175,9 +180,8 @@ the selftest still exits 1, and the checker still reads 4/4 logs as ok.
 berries, the four materials, the three dishes and the pestle as items with the
 jar's food/effect numbers; five recipes; the berries tag; the creative tab.
 
-**Out (gaps, next slices):** Mutating Powder and the three mutation recipes
-(needs an item-entity scan around a raycast point, which has no stamped
-helper); the Bark Knife and the six barks (needs a held-stack damage helper and
+**Out (gaps, next slices):** ~~Mutating Powder and the three mutation recipes~~
+(**in since slice 2**, 0.2.1); the Bark Knife and the six barks (needs a held-stack damage helper and
 a `use_item_on` hook); the Mortar, Pestle spell crafting and the component
 recipes; the Altar and every ritual; the ten standing stones and their block
 entities; the Brazier; the Imbuer; Staves, Crystal Staff, Runic Focus/Tablet and
@@ -460,3 +464,174 @@ Skills: superpowers/using-superpowers,writing-plans,test-driven-development,syst
 > leg are gone; `runtime.rs` and its 14 tests are unchanged byte for byte (5 new glue tests, 19
 > total). Version 0.2.0. Not yet re-run in game at this pin (no launcher/game build): the last
 > green in-game run is the 0.1.0 bundle's.
+
+## Slice 2 — the powder chain (0.2.1, pin `0a875da`)
+
+The slice the gap list called *"Mutating Powder and the three mutation recipes (needs an item-entity
+scan around a raycast point, which has no stamped helper)"*, and the one that closes *"the three
+herbs have no survival-obtainable source in this slice"*. At `0a875da` the blocker is gone: the SDK
+publishes `LevelRef::clip`, `LevelRef::entities_in`, `host.item_entity(…) → ItemEntityRef::stack`,
+`EntityRef::discard`, `LevelRef::set_block` and `LevelRef::bone_meal`, which is exactly
+`MutatingPowderItem.use` and `GrowthPowderItem.useOn`. The mutating powder's own recipe needs
+Growth Powder, so the family is the two powders as one chain.
+
+Class **content**, tier **deep** for the mod; this slice is `logic`-shaped (two item behaviours over
+reads and block writes, no block entity, menu, entity or renderer).
+
+### What the jar says (read, not copied)
+
+| Upstream (`db9aa88`, branch `1.21.1`) | Behaviour |
+|---|---|
+| `item/MutatingPowderItem.use` | `RootsUtil.getRayTrace(level, player, 4)` (40 steps of 0.1, first non-air); item entities in `AABB(pos − 2, pos + 3)`; `MutagenManager.getRecipe`; on a match `setBlockAndUpdate(pos, result)`, **discard every item entity in the box**, `onCrafted`; `stack.shrink(1)` unless creative |
+| `mutation/MutagenRecipe.matches` | the box's stacks must be **exactly** the recipe's inputs (`ItemStack.isSameItem`, each removed once, nothing left) and the block must be the base flower |
+| `MutagenFlareOrchidRecipe` | `blue_orchid` + `blaze_rod` + `lava_bucket`; Nether; Fire Resistance; netherrack on all 8 horizontal neighbours; `igniteForSeconds(20)` |
+| `MutagenMidnightBloomRecipe` | `poppy` + `coal_block`; The End; obsidian two below; Slowness; `persistentData[rootsclassic:RMOD_skipTicks] = 200` |
+| `MutagenRadiantDaisyRecipe` | `oxeye_daisy` + `glowstone` + `prismarine_crystals`; Overworld; Night Vision; `5000 < dayTime < 7000`; Blindness 1200 |
+| `item/GrowthPowderItem.useOn` | dirt → grass block; water with air above → lily pad above; else a `BonemealableBlock` is random-ticked once; the powder is spent only on `anySuccess`; returns `PASS` |
+| `recipe/growth_powder.json` | shapeless `c:seeds/wheat` + `short_grass` + `c:dusts/redstone` + `pestle` → 4 |
+| `recipe/mutating_powder.json` | shapeless 4 × `growth_powder` + `c:nether_stars` + `c:crops/nether_wart` + `pestle` → 1 |
+
+### The port
+
+- `src/runtime.rs` (appended after slice 1, which stays a byte prefix of the file):
+  `ray_steps` (the 0.1 walk), `Mutation` (base, result, ingredients, `ALL` in `MutagenManager.reload`'s
+  order), `MutagenScene` + `mutation()` (the exact-multiset match and each recipe's conditions) and
+  `growth()`. Seven new tests.
+- `src/lib.rs`: `Powder` (an `ItemPart` on `rootsclassic:mutating_powder`) and `GrowthPowder` (on
+  `rootsclassic:growth_powder`), plus the glue: `look_vector` from the entity rotation,
+  `ray_target`, `mutation_box`, `neighbours`, `effect_ids`, `data_get`-free reads, `set_block` with
+  `UPDATE_ALL`, `discard`, and `spend` through `ItemPlace::PlayerHand::extract` (creative gives
+  without losing). Four new glue tests (29 in total).
+- Content: `growth_powder` and `mutating_powder` items (`minecraft:sugar` / `minecraft:gunpowder`
+  templates, the second `stacksTo(1)`), their two recipes in 26.3 shape with **bare** item/tag
+  strings (never the 1.21.1 `{"item": …}` object, which 26.3 refuses), and four convention tags
+  `c:seeds/wheat`, `c:dusts/redstone`, `c:nether_stars`, `c:crops/nether_wart`. `carry_content.py`
+  went 79 → **93 files, 0 pending**.
+
+### Upstream defects fixed
+
+- **Growth powder never paid for a lily pad.** `GrowthPowderItem.applyGrowthHere`'s water branch
+  places the lily pad and then falls out of the `else if` to `return false`, so the caller never
+  shrinks the powder: one powder grows lily pads forever. The port returns success from that
+  branch. **Reachability, measured:** a player click cannot actually land on a water block at this
+  pin (vanilla's block pick ignores fluids — `LevelRef::clip` has `ClipFluid::None`, and
+  `ctl interact` on water answers "no face … is visible"), so the branch is upstream's dead path.
+  The fix is kept (it is what the code means) and proved by the unit rule `growth_powder_knows_
+  dirt_and_water`; the e2e cannot reach it and does not claim to. `probe-growth-branches.log` records
+  the measurement (`water: powder 3 -> 3, block now minecraft:water`).
+
+### Deviations
+
+| Area | Upstream | This port |
+|---|---|---|
+| the powder's block write | client prediction too | server only (the SDK refuses authoritative writes on a `ClientHost`) |
+| the growth powder's `PASS` | always `PASS` | `SuccessServer` when the powder acted, `PASS` otherwise. A `PASS` lets the click fall through and be re-issued, which ran `use_on` twice and spent **two** powders for one growth (measured: `3 -> 1`); `SuccessServer` ends the click after the one growth. `PASS` when nothing grew keeps the block's own use as upstream leaves it |
+| the bonemealable branch | `state.randomTick` once | `LevelRef::bone_meal` — the closest supported API: same refusal on a block that cannot grow, one growth step, and "did something grow" as the success signal. It can advance a crop further than one random tick (measured: wheat age 0 → 2..5) |
+| particles | 40 magic particles on use, 100 in a box on success | not drawn (no `native_particles` slice yet) |
+
+### Traps this slice cost
+
+1. **A powder whose template is a block item places a block.** `growth_powder` was declared with
+   `template = "minecraft:redstone"`; clicking stone with it *placed a redstone wire* and spent a
+   powder (measured: `stone: powder 3 -> 2 / above minecraft:redstone_wire`). The redstone item
+   carries the wire block. Both powders now use plain items (`minecraft:sugar`, `minecraft:gunpowder`)
+   and `probe-growth-branches.log` reads `stone: powder 3 -> 3 / above minecraft:air`.
+2. **`mutating_powder` is `stacksTo(1)`.** `item replace … with rootsclassic:mutating_powder 2` is
+   refused, and `ctl command` still answers `ok:true`; the leg then ran with an empty hand and
+   reported "the blue orchid stayed". Every mutation leg now holds **one** and asserts `1 -> 0`.
+3. **The Nether ring blocks the line of sight.** Every horizontal neighbour of the flower is
+   netherrack, so a click from any side hits the ring. The flare legs stand on a block one above the
+   ring, and the aim point is *inside* the flower's outline — a ray that only grazes the top face
+   passes over the flower and lands on the netherrack behind (`flare aim: … pos [4,120,3]`).
+4. **A flower's shape is smaller than its block.** Aiming at the block centre (y+0.8) misses the
+   vanilla flower outline and hits the block behind; y+0.3 is inside it.
+5. **A day-old wheat is two pixels tall.** `look-at block … up` answers "no face … is visible"; the
+   crop leg aims at a point inside the plant (`look-at 10.5 120.06 16.5`) and clicks with `use-item`.
+6. **`ctl save` does not write the player's `.dat`.** For a single-player world the owner's file is
+   written by `playerdata::save_owner` when the player leaves or the world closes, so the mutation's
+   entity tags were unreadable from disk. `/data get entity @s <path>` works in game (the reply is
+   the command's chat line) and needs no quit: `Fire` reads `384s` after the flare orchid and
+   `NeoForgeData` reads `{"rootsclassic:RMOD_skipTicks": 200}` after the midnight bloom.
+7. **The dragon's eye can land the player in the void.** The teleport is ±16 blocks in three axes;
+   the old End floor spanned z −8..40 and a landing outside it killed the player, which the *recipe*
+   leg then reported as "the dead screen is open". The arena now fills z −20..40 and the leg
+   respawns (if dead), re-tps and clears effects.
+8. **A stale SDK rlib is reused across pins.** After replacing `.horizon/sdk` from `0b14f8a` with
+   `0a875da`, `cargo test` compiled the new `horizon-mod-vocab` against the *old* `horizon-mod-api-
+   macros` (mtimes older than the target) and failed with `cannot find attribute raw_text`. `find
+   .horizon/sdk/api -name '*.rs' … | xargs touch` forces the rebuild; `clippy` had already "passed"
+   against the stale rlibs, so both were re-run after the touch.
+
+### Coverage (every family this slice ships)
+
+| Family | Status | Evidence |
+|---|---|---|
+| `growth_powder` item, its recipe (4 per craft) and wrong-ingredient control | **tested** | `craft_check.py` "wheat seeds + short grass + redstone + pestle -> 4 growth powder", control "… stick -> nothing" |
+| `mutating_powder` item, its recipe and control | **tested** | `craft_check.py` "4 growth powder + nether star + nether wart + pestle -> mutating powder"; control with 3 growth powder stays empty |
+| the four convention tags | **tested** | the recipes above only match through `#c:seeds/wheat`, `#c:dusts/redstone`, `#c:nether_stars`, `#c:crops/nether_wart` |
+| growth powder: dirt → grass, powder spent | **tested** | e2e "growth powder PASS: dirt -> minecraft:grass_block, powder 3 -> 2" |
+| growth powder: non-growable block, nothing spent | **tested** | "stone control PASS: minecraft:stone unchanged, powder stays 2" |
+| growth powder: a young crop grows, powder spent | **tested** | "growing crop PASS: wheat age 0 -> 5, one powder spent" |
+| growth powder: water → lily pad | **blocked(unreachable-through-a-click)** | the rule is unit-tested; measured unreachable (defect note above) |
+| flare orchid mutation (Nether, ring, Fire Resistance) | **tested** | e2e "flare orchid PASS: rootsclassic:flare_orchid, ingredients gone, powder 1 -> 0" |
+| its `igniteForSeconds(20)` | **tested** | "flare orchid PASS: the player burns (Fire=384 ticks, /data get entity @s Fire)" |
+| its controls: no Fire Resistance, a bystander item | **tested** | "no-resistance control PASS … the powder is still spent", "extra-item control PASS: … all 3 entities still there" |
+| midnight bloom mutation (The End, obsidian two below, Slowness) | **tested** | "midnight bloom PASS: rootsclassic:midnight_bloom" |
+| its `skipTicks = 200` | **tested** | "NeoForgeData=… {"rootsclassic:RMOD_skipTicks": 200}" |
+| radiant daisy mutation (Overworld, noon, Night Vision) | **tested** | "radiant daisy PASS: rootsclassic:radiant_daisy … powder 1 -> 0" |
+| its Blindness 1200 | **tested** | "blindness applied" (the effect list carries `blindness`) |
+| its control: midnight instead of noon | **tested** | "midnight control PASS: minecraft:oxeye_daisy kept" |
+| particles / sounds | **not ported** | no particle or sound helper in this slice (recorded deviation) |
+
+### Red → green
+
+- **Red (rules):** `cargo test` on `runtime.rs` before the rules existed —
+  `error[E0425]: cannot find type Scene in this scope` / `cannot find function ray_steps in this
+  scope` (`../_shared/evidence/rootsclassic/sdk-0a875da/slice2-red.log`).
+- **Green (rules):** 29 passed (14 slice-1 runtime + 7 slice-2 runtime + 8 glue).
+- **Red (in game, first cut):** the growth leg failed with
+  `FAIL: growth powder on dirt: 3 -> 1, expected one spent` — one click spent two powders. That log
+  was superseded by the next run; the measurement is re-quotable from `probe-double-spend.sh`, which
+  now reads `click 1: powder 3 -> 2`.
+- **Green (in game):** the full scenario passes, all controls hold, `EXIT:0`.
+
+### Verification (SDK `0a875da`)
+
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
+
+Everything through `ports/tools/build-slot.sh` with `CARGO_INCREMENTAL=0`; logs in
+[`../_shared/evidence/rootsclassic/sdk-0a875da/`](../_shared/evidence/rootsclassic/sdk-0a875da/)
+and [`../_shared/evidence/rootsclassic-e2e/`](../_shared/evidence/rootsclassic-e2e/).
+
+| Check | Command | Result |
+|---|---|---|
+| slice 1 unchanged | `head -c <retired size> src/runtime.rs \| cmp - <retired>` | identical prefix; whole file `6bcfe9ba…` (`runtime-carry.log`) |
+| rules + glue | `cargo test` | **29 passed**, 0 failed (`unit.log`, `sdk-test.log`) |
+| formatting | `cargo fmt --check` | `FMT_EXIT:0` (`fmt.log`) |
+| lints | `cargo clippy --all-targets -- -D warnings` | 0 warnings (`clippy.log`) |
+| package | `cargo horizon-mod build`, twice | **59,769 B**, SHA-256 `c49f7f02…4d6f`, same bytes both runs (`build.log`, `build-again.log`, `sha256-both.txt`) |
+| registry check | `cargo horizon-mod check rootsclassic.hmod` | `rootsclassic 0.2.1 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)`, **EXIT 0** (`check.log`) |
+| fits the pin | `cargo horizon-mod fits rootsclassic.hmod --build 0a875da` | `0a875da  made for`, **EXIT 0** (`sdk-fits.log`) |
+| fits another build | `cargo horizon-mod fits rootsclassic.hmod --build 0b14f8a` | `0b14f8a  fits`, **EXIT 0** (`sdk-fits-other.log`) |
+| what it uses | `cargo horizon-mod check … --uses` | 276 entries (`uses.log`, `uses.json`) |
+| package contents | `unzip -l` | **101 entries**, no `Cargo.lock`, `src/runtime.rs` = the tree's (`package-entries.log`) |
+| content still carried | `python3 tools/carry_content.py --check` | **93 files, 0 pending** (`carry-check.log`) |
+| package gate | `python3 ports/tools/verify-sdk-package.py rootsclassic` | **1/1** |
+| in game | `launcher-game.sh build rootsclassic` + `build-slot.sh run --step e2e -- bash tools/e2e.sh` | **PASS + EXIT:0** (`rootsclassic-e2e/e2e-launcher.log`) |
+| control (the same Nightly without the package) | `GAME=$CONTROL_GAME …` | `FAIL: the consume hook did not heal +2 … the native bundle is not running` + **EXIT:1** (`e2e-control.log`) |
+| selftest | `SELFTEST=1 …` | `FAIL: SELFTEST: shears foraged no berry (the control is alive)` + **EXIT:1** (`e2e-selftest.log`) |
+| log checker | `python3 ports/tools/check-e2e-logs.py rootsclassic-e2e --strict` | `logs=3 ok=3 missing-exit=0 bad-exit=0` |
+
+Deliverable: `rootsclassic.hmod`, **59,769 B**, SHA-256
+`c49f7f02fd788408151f5993636d384b83f48ac98f0d3cefa06e168e1ca64d6f`, version **0.2.1**,
+format `native-1/0a875da…/e59da90…`, **101 entries**, no packed `Cargo.lock`.
+
+### Gaps after slice 2
+
+The power chain closes the herbs' source; what is left is unchanged from the migration's list — the
+Bark Knife and the six barks (needs a `use_item_on` block transform and a held-stack damage helper),
+the Mortar/Pestle spell crafting, the Altar and rituals, the ten standing stones, the Brazier, the
+Imbuer, staves and mana, the living tools and armour, the Phantom Skeleton, the JEI plugin, the Runic
+Tablet guide, the `[magic]`/`[client]` config sections, item tooltips, and particles/sounds. The
+water branch of the growth powder is upstream-dead (see above) and cannot be proved in game at this
+pin.
